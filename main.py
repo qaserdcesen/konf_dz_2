@@ -4,6 +4,7 @@ import requests
 import zipfile
 import io
 import xml.etree.ElementTree as ET
+from packaging import version
 
 
 def parse_arguments():
@@ -51,38 +52,73 @@ def get_registration_index_url(repository_url, package_name):
     return registration_index_url
 
 
-def get_latest_version(package_name, repository_url):
+def get_all_versions(package_name, repository_url):
     """
-    Получает последнюю доступную версию пакета из регистрационного API.
+    Получает все доступные версии пакета из регистрационного API.
     """
     registration_index_url = get_registration_index_url(repository_url, package_name)
+    print(f"Fetching registration index URL: {registration_index_url}")  # Отладка
+
     response = requests.get(registration_index_url)
+    print(f"Response status code: {response.status_code}")  # Отладка
+
     if response.status_code != 200:
         raise Exception(f"Failed to fetch registration index for package {package_name}: {response.status_code}")
 
-    data = response.json()
+    try:
+        data = response.json()
+        print(f"Registration index data: {data}")  # Отладка
+    except ValueError as e:
+        print(f"Error parsing JSON: {e}")  # Отладка
+        raise Exception(f"Invalid JSON response for package {package_name}")
 
-    # Получение последней версии из данных регистрационного индекса
-    # Обычно последние элементы в 'items' содержат последние версии
-    # Здесь предполагаем, что данные упорядочены по версиям
-    # Можно также использовать семантическую сортировку версий
+    # Получение всех версий из данных регистрационного индекса
     pages = data.get('items', [])
+    print(f"Registration pages: {pages}")  # Отладка
+
     if not pages:
         raise Exception(f"No registration pages found for package {package_name}")
 
-    # Предполагаем, что последняя страница содержит последние версии
-    last_page = pages[-1]
-    if isinstance(last_page, str):
-        # Иногда страницы могут быть представлены как строки (URL)
-        last_page = requests.get(last_page).json()
+    versions = []
 
-    items = last_page.get('items', [])
-    if not items:
-        raise Exception(f"No items found in the last registration page for package {package_name}")
+    for page in pages:
+        if isinstance(page, str):
+            # Если страницы представлены как строки (URL), получаем JSON
+            page_response = requests.get(page)
+            print(f"Fetching registration page URL: {page}")  # Отладка
+            if page_response.status_code != 200:
+                print(f"Failed to fetch registration page: {page_response.status_code}")  # Отладка
+                continue
+            page_data = page_response.json()
+        else:
+            page_data = page
 
-    # Предполагаем, что последняя запись содержит последнюю версию
-    latest_entry = items[-1]
-    latest_version = latest_entry['catalogEntry']['version']
+        inner_items = page_data.get('items', [])
+        print(f"Inner registration items: {inner_items}")  # Отладка
+
+        for entry in inner_items:
+            catalog_entry = entry.get('catalogEntry', {})
+            pkg_version = catalog_entry.get('version')
+            if pkg_version:
+                versions.append(pkg_version)
+
+    if not versions:
+        raise Exception(f"No versions found for package {package_name}")
+
+    print(f"All available versions: {versions}")  # Отладка
+    return versions
+
+
+def get_latest_stable_version(versions):
+    """
+    Выбирает последнюю стабильную версию из списка версий.
+    """
+    stable_versions = [v for v in versions if not version.parse(v).is_prerelease]
+    if not stable_versions:
+        raise Exception("No stable versions found.")
+
+    latest_version = max(stable_versions, key=version.parse)
+    print(f"Latest stable version: {latest_version}")  # Отладка
     return latest_version
 
 
@@ -92,18 +128,45 @@ def get_download_url(package_name, version, repository_url):
     """
     package_lower = package_name.lower()
     registration_version_url = f"{repository_url}/registration5-gz-semver2/{package_lower}/{version}.json"
+    print(f"Fetching registration version URL: {registration_version_url}")  # Отладка
+
     response = requests.get(registration_version_url)
+    print(f"Response status code: {response.status_code}")  # Отладка
+
     if response.status_code != 200:
-        raise Exception(
-            f"Failed to fetch registration data for package {package_name} version {version}: {response.status_code}")
+        raise Exception(f"Failed to fetch registration data for package {package_name} version {version}: {response.status_code}")
 
-    data = response.json()
+    try:
+        data = response.json()
+        print(f"Registration data: {data}")  # Отладка
+    except ValueError as e:
+        print(f"Error parsing JSON: {e}")  # Отладка
+        raise Exception(f"Invalid JSON response for package {package_name} version {version}")
 
-    # Извлекаем URL для скачивания .nupkg файла
-    # В зависимости от структуры API, путь может отличаться
-    # Проверяем наличие 'catalogEntry' и 'packageContent'
-    catalog_entry = data.get('catalogEntry', {})
+    items = data.get('items', [])
+    print(f"Items: {items}")  # Отладка
+
+    if not items:
+        raise Exception(f"No items found in registration data for package {package_name} version {version}")
+
+    last_page = items[-1]
+    print(f"Last page: {last_page}")  # Отладка
+
+    if isinstance(last_page, dict) and 'items' in last_page:
+        inner_items = last_page['items']
+        print(f"Inner items: {inner_items}")  # Отладка
+
+        if not inner_items:
+            raise Exception(f"No inner items found in the last registration page for package {package_name} version {version}")
+
+        catalog_entry = inner_items[0].get('catalogEntry', {})
+        print(f"Catalog Entry: {catalog_entry}")  # Отладка
+    else:
+        raise Exception(f"'catalogEntry' not found in registration data for package {package_name} version {version}")
+
     download_url = catalog_entry.get('packageContent')
+    print(f"Download URL: {download_url}")  # Отладка
+
     if not download_url:
         raise Exception(f"No download URL found for package {package_name} version {version}")
 
@@ -115,7 +178,10 @@ def download_nupkg(package_name, version, repository_url):
     Скачивает nupkg файл для данного пакета и версии из репозитория.
     """
     download_url = get_download_url(package_name, version, repository_url)
+    print(f"Downloading nupkg from URL: {download_url}")  # Отладка
     response = requests.get(download_url)
+    print(f"Download response status code: {response.status_code}")  # Отладка
+
     if response.status_code == 200:
         return io.BytesIO(response.content)
     else:
@@ -168,12 +234,14 @@ def build_dependency_graph(package_name, repository_url, max_depth, current_dept
     visited.add(package_name.lower())
 
     try:
-        # Получаем последнюю версию пакета
-        version = get_latest_version(package_name, repository_url)
-        print(f"Processing {package_name} version {version}")
+        # Получаем все доступные версии пакета
+        versions = get_all_versions(package_name, repository_url)
+        # Выбираем последнюю стабильную версию
+        latest_version = get_latest_stable_version(versions)
+        print(f"Processing {package_name} version {latest_version}")
 
         # Скачиваем nupkg файл
-        nupkg_stream = download_nupkg(package_name, version, repository_url)
+        nupkg_stream = download_nupkg(package_name, latest_version, repository_url)
 
         # Извлекаем зависимости
         dependencies = extract_dependencies(nupkg_stream)
