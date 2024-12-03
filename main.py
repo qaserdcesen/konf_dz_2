@@ -4,7 +4,7 @@ import requests
 import zipfile
 import io
 import xml.etree.ElementTree as ET
-from packaging import version
+from packaging import version  # Для работы с версиями
 
 
 def parse_arguments():
@@ -42,142 +42,89 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def get_registration_index_url(repository_url, package_name):
+def get_flatcontainer_index_url(package_name):
     """
-    Получает URL регистрационного индекса для указанного пакета.
+    Получает URL для Flat Container API для указанного пакета.
     """
-    # Преобразуем имя пакета в нижний регистр, так как NuGet API чувствителен к регистру
     package_lower = package_name.lower()
-    registration_index_url = f"{repository_url}/registration5-gz-semver2/{package_lower}/index.json"
-    return registration_index_url
+    flatcontainer_index_url = f"https://api.nuget.org/v3-flatcontainer/{package_lower}/index.json"
+    return flatcontainer_index_url
 
 
-def get_all_versions(package_name, repository_url):
+def get_all_versions_flatcontainer(package_name):
     """
-    Получает все доступные версии пакета из регистрационного API.
+    Получает все доступные версии пакета из Flat Container API.
     """
-    registration_index_url = get_registration_index_url(repository_url, package_name)
-    print(f"Fetching registration index URL: {registration_index_url}")  # Отладка
+    flatcontainer_index_url = get_flatcontainer_index_url(package_name)
+    print(f"Fetching Flat Container index URL: {flatcontainer_index_url}")  # Отладка
 
-    response = requests.get(registration_index_url)
+    response = requests.get(flatcontainer_index_url)
     print(f"Response status code: {response.status_code}")  # Отладка
 
     if response.status_code != 200:
-        raise Exception(f"Failed to fetch registration index for package {package_name}: {response.status_code}")
+        raise Exception(f"Failed to fetch versions for package {package_name}: {response.status_code}")
 
     try:
         data = response.json()
-        print(f"Registration index data: {data}")  # Отладка
+        print(f"Flat Container index data: {data}")  # Отладка
     except ValueError as e:
         print(f"Error parsing JSON: {e}")  # Отладка
         raise Exception(f"Invalid JSON response for package {package_name}")
 
-    # Получение всех версий из данных регистрационного индекса
-    pages = data.get('items', [])
-    print(f"Registration pages: {pages}")  # Отладка
-
-    if not pages:
-        raise Exception(f"No registration pages found for package {package_name}")
-
-    versions = []
-
-    for page in pages:
-        if isinstance(page, str):
-            # Если страницы представлены как строки (URL), получаем JSON
-            page_response = requests.get(page)
-            print(f"Fetching registration page URL: {page}")  # Отладка
-            if page_response.status_code != 200:
-                print(f"Failed to fetch registration page: {page_response.status_code}")  # Отладка
-                continue
-            page_data = page_response.json()
-        else:
-            page_data = page
-
-        inner_items = page_data.get('items', [])
-        print(f"Inner registration items: {inner_items}")  # Отладка
-
-        for entry in inner_items:
-            catalog_entry = entry.get('catalogEntry', {})
-            pkg_version = catalog_entry.get('version')
-            if pkg_version:
-                versions.append(pkg_version)
+    versions = data.get('versions', [])
+    print(f"All available versions (flatcontainer): {versions}")  # Отладка
 
     if not versions:
         raise Exception(f"No versions found for package {package_name}")
 
-    print(f"All available versions: {versions}")  # Отладка
     return versions
 
 
 def get_latest_stable_version(versions):
     """
     Выбирает последнюю стабильную версию из списка версий.
+    Фильтрует предрелизные версии на основе наличия ключевых слов и свойства is_prerelease.
     """
-    stable_versions = [v for v in versions if not version.parse(v).is_prerelease]
+    stable_versions = []
+    for v in versions:
+        # Исключаем предрелизные версии по ключевым словам
+        if any(pre in v.lower() for pre in ['-beta', '-rc', '-preview', '-dev']):
+            print(f"Skipping pre-release version (keyword): {v}")  # Отладка
+            continue
+        try:
+            parsed_version = version.parse(v)
+            if parsed_version.is_prerelease:
+                print(f"Skipping pre-release version (is_prerelease): {v}")  # Отладка
+                continue
+            stable_versions.append(parsed_version)
+            print(f"Added stable version: {v}")  # Отладка
+        except Exception as e:
+            print(f"Skipping version '{v}' due to parsing error: {e}")  # Отладка
+
     if not stable_versions:
         raise Exception("No stable versions found.")
 
-    latest_version = max(stable_versions, key=version.parse)
-    print(f"Latest stable version: {latest_version}")  # Отладка
-    return latest_version
+    latest_version = max(stable_versions)
+    latest_version_str = str(latest_version)
+    print(f"Latest stable version: {latest_version_str}")  # Отладка
+    return latest_version_str
 
 
-def get_download_url(package_name, version, repository_url):
+def get_download_url(package_name, version):
     """
-    Получает URL для скачивания .nupkg файла указанного пакета и версии.
+    Получает URL для скачивания .nupkg файла через Flat Container API.
     """
     package_lower = package_name.lower()
-    registration_version_url = f"{repository_url}/registration5-gz-semver2/{package_lower}/{version}.json"
-    print(f"Fetching registration version URL: {registration_version_url}")  # Отладка
-
-    response = requests.get(registration_version_url)
-    print(f"Response status code: {response.status_code}")  # Отладка
-
-    if response.status_code != 200:
-        raise Exception(f"Failed to fetch registration data for package {package_name} version {version}: {response.status_code}")
-
-    try:
-        data = response.json()
-        print(f"Registration data: {data}")  # Отладка
-    except ValueError as e:
-        print(f"Error parsing JSON: {e}")  # Отладка
-        raise Exception(f"Invalid JSON response for package {package_name} version {version}")
-
-    items = data.get('items', [])
-    print(f"Items: {items}")  # Отладка
-
-    if not items:
-        raise Exception(f"No items found in registration data for package {package_name} version {version}")
-
-    last_page = items[-1]
-    print(f"Last page: {last_page}")  # Отладка
-
-    if isinstance(last_page, dict) and 'items' in last_page:
-        inner_items = last_page['items']
-        print(f"Inner items: {inner_items}")  # Отладка
-
-        if not inner_items:
-            raise Exception(f"No inner items found in the last registration page for package {package_name} version {version}")
-
-        catalog_entry = inner_items[0].get('catalogEntry', {})
-        print(f"Catalog Entry: {catalog_entry}")  # Отладка
-    else:
-        raise Exception(f"'catalogEntry' not found in registration data for package {package_name} version {version}")
-
-    download_url = catalog_entry.get('packageContent')
-    print(f"Download URL: {download_url}")  # Отладка
-
-    if not download_url:
-        raise Exception(f"No download URL found for package {package_name} version {version}")
-
-    return download_url
+    flatcontainer_download_url = f"https://api.nuget.org/v3-flatcontainer/{package_lower}/{version}/{package_lower}.{version}.nupkg"
+    print(f"Fetching Flat Container download URL: {flatcontainer_download_url}")  # Отладка
+    return flatcontainer_download_url
 
 
-def download_nupkg(package_name, version, repository_url):
+def download_nupkg(package_name, version):
     """
-    Скачивает nupkg файл для данного пакета и версии из репозитория.
+    Скачивает nupkg файл для данного пакета и версии через Flat Container API.
     """
-    download_url = get_download_url(package_name, version, repository_url)
+    download_url = get_download_url(package_name, version)
     print(f"Downloading nupkg from URL: {download_url}")  # Отладка
     response = requests.get(download_url)
     print(f"Download response status code: {response.status_code}")  # Отладка
@@ -199,25 +146,41 @@ def extract_dependencies(nupkg_stream):
             raise FileNotFoundError(".nuspec file not found in the nupkg")
         nuspec_content = z.read(nuspec_files[0])
 
-    # Парсинг XML
+    # Парсинг XML с учетом пространств имен
     root = ET.fromstring(nuspec_content)
 
-    dependencies = []
-    metadata = root.find('metadata')
+    # Извлечь пространство имен из корневого элемента
+    namespace = ''
+    if root.tag.startswith('{'):
+        namespace = root.tag.split('}')[0].strip('{')
+
+    ns = {'ns': namespace} if namespace else {}
+
+    dependencies = set()  # Используем set для избежания дублирования
+    metadata = root.find('ns:metadata', ns) if namespace else root.find('metadata')
     if metadata is None:
         raise ValueError("Invalid .nuspec format: missing metadata")
 
-    dependencies_node = metadata.find('dependencies')
+    dependencies_node = metadata.find('ns:dependencies', ns) if namespace else metadata.find('dependencies')
     if dependencies_node is not None:
         # Обработка групп зависимостей (например, по целевым фреймворкам)
-        for group in dependencies_node.findall('group'):
-            for dep in group.findall('dependency'):
-                dependencies.append(dep.attrib['id'])
+        groups = dependencies_node.findall('ns:group', ns) if namespace else dependencies_node.findall('group')
+        for group in groups:
+            deps = group.findall('ns:dependency', ns) if namespace else group.findall('dependency')
+            for dep in deps:
+                dep_id = dep.attrib.get('id')
+                if dep_id:
+                    dependencies.add(dep_id)
+                    print(f"Found dependency: {dep_id}")  # Отладка
         # Обработка зависимостей без группировки
-        for dep in dependencies_node.findall('dependency'):
-            dependencies.append(dep.attrib['id'])
+        deps = dependencies_node.findall('ns:dependency', ns) if namespace else dependencies_node.findall('dependency')
+        for dep in deps:
+            dep_id = dep.attrib.get('id')
+            if dep_id:
+                dependencies.add(dep_id)
+                print(f"Found dependency: {dep_id}")  # Отладка
 
-    return dependencies
+    return list(dependencies)
 
 
 def build_dependency_graph(package_name, repository_url, max_depth, current_depth=0, graph=None, visited=None):
@@ -235,13 +198,13 @@ def build_dependency_graph(package_name, repository_url, max_depth, current_dept
 
     try:
         # Получаем все доступные версии пакета
-        versions = get_all_versions(package_name, repository_url)
+        versions = get_all_versions_flatcontainer(package_name)
         # Выбираем последнюю стабильную версию
         latest_version = get_latest_stable_version(versions)
         print(f"Processing {package_name} version {latest_version}")
 
         # Скачиваем nupkg файл
-        nupkg_stream = download_nupkg(package_name, latest_version, repository_url)
+        nupkg_stream = download_nupkg(package_name, latest_version)
 
         # Извлекаем зависимости
         dependencies = extract_dependencies(nupkg_stream)
