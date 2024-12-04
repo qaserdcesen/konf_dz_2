@@ -47,7 +47,7 @@
     return latest_version
     
 3. **Скачивание `.nupkg` файла пакета:**
-    ```pythin
+    ```python
     def download_nupkg(package_name, version):
     download_url = f"https://api.nuget.org/v3-flatcontainer/{package_name}/{version}/{package_name}.{version}.nupkg"
     response = requests.get(download_url)
