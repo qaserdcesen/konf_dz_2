@@ -137,11 +137,14 @@
 
 Запуск визуализатора:
 
-    
-    python dependency_visualizer.py --visualizer_path "C:\\Program Files\\Graphviz\\bin\\dot.exe" --package_name "Newtonsoft.Json" --output_path "output/dependencies.dot" --max_depth 3 --repository_url "https://api.nuget.org/v3"
+  ```bash
+  python3 dependency_visualizer.py --visualizer_path "C:\\Program Files\\Graphviz\\bin\\dot.exe" --package_name "Newtonsoft.Json" --output_path "output/dependencies.dot" --max_depth 3 --repository_url "https://api.nuget.org/v3"
+  ```
 
-    python dependency_visualizer.py --visualizer_path "C:\\Program Files\\Graphviz\\bin\\dot.exe" --package_name "NUnit" --output_path "output/dependencies.dot" --max_depth 1 --repository_url "https://api.nuget.org/v3"
 
+  ```bash
+  python3 dependency_visualizer.py --visualizer_path "C:\\Program Files\\Graphviz\\bin\\dot.exe" --package_name "NUnit" --output_path "output/dependencies.dot" --max_depth 1 --repository_url "https://api.nuget.org/v3"
+  ```
     
  **Пример сеанса работы:**
 
@@ -156,9 +159,7 @@
 ## Результаты прогонов тестов
 
 **Тестовый файл для проверки всех функций**
-````
-# tests/test_dependency_visualizer.py
-
+````python
 import unittest
 from unittest.mock import patch, Mock
 from io import BytesIO
